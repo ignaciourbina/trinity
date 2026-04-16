@@ -1,0 +1,1682 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{thmtools}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,decorations.pathmorphing,shapes.geometric}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage{bm}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{cleveref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=NavyBlue,
+  citecolor=OliveGreen,
+  urlcolor=BrickRed
+}
+
+% --- Theorem environments ---
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\newtheorem{example}[theorem]{Example}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% --- Notation shortcuts ---
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\cF}{\mathcal{F}}
+\newcommand{\cH}{\mathcal{H}}
+\newcommand{\cS}{\mathcal{S}}
+\newcommand{\cA}{\mathcal{A}}
+\newcommand{\cV}{\mathcal{V}}
+\newcommand{\cX}{\mathcal{X}}
+\newcommand{\cZ}{\mathcal{Z}}
+\newcommand{\cT}{\mathcal{T}}
+\newcommand{\cM}{\mathcal{M}}
+\newcommand{\cL}{\mathcal{L}}
+\newcommand{\cD}{\mathcal{D}}
+\newcommand{\cP}{\mathcal{P}}
+\newcommand{\cN}{\mathcal{N}}
+\newcommand{\cC}{\mathcal{C}}
+\newcommand{\cB}{\mathcal{B}}
+\newcommand{\cW}{\mathcal{W}}
+\newcommand{\KL}{\mathrm{KL}}
+\newcommand{\TV}{\mathrm{TV}}
+\newcommand{\tr}{\mathrm{tr}}
+\newcommand{\diag}{\mathrm{diag}}
+\newcommand{\softmax}{\mathrm{softmax}}
+\newcommand{\Attn}{\mathrm{Attn}}
+\newcommand{\vocab}{\mathcal{V}}
+\newcommand{\ind}{\mathbf{1}}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\title{%
+  \textbf{Autoregressive Language Models as\\
+  Bayesian Optimal Controllers over\\
+  Hidden Markovian State Spaces}\\[0.6em]
+  \large A Unified Theoretical Framework
+}
+
+\author{%
+  A Theoretical Synthesis
+}
+
+\date{April 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We develop a unified mathematical framework for understanding large autoregressive
+transformer language models through the lens of three interconnected formalisms:
+\emph{hidden Markov processes}, \emph{stochastic optimal control}, and
+\emph{Bayesian inference}. We formalise the claim that the internal hidden state
+of a transformer defines a high-dimensional, continuous-state hidden Markov
+process whose effective memory decays exponentially, yielding asymptotic
+memorylessness governed by the spectral properties of an induced transfer
+operator. We then show that autoregressive token generation can be cast as a
+stochastic optimal control problem in which the model's hidden state serves as
+the control state, token emissions are control actions, and the learned value
+function encodes a Bellman-optimal policy over sequence trajectories. Finally, we
+demonstrate that the pretrained weights define a prior measure over token
+sequences, reinforcement learning from human feedback (RLHF) reshapes this prior
+into a value-weighted posterior, and in-context conditioning performs amortised
+variational Bayesian updating within each conversation. The three perspectives
+are proven to be mutually consistent, yielding a coherent theoretical picture in
+which memory decay, trajectory optimisation, and posterior concentration are
+manifestations of a single underlying generative mechanism.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%=============================================================================
+\section{Introduction and Motivation}\label{sec:intro}
+%=============================================================================
+
+Modern large language models (LLMs) based on the transformer architecture
+generate text by iteratively sampling tokens from a conditional distribution.
+While the engineering details of these models are well understood, a unified
+\emph{theoretical} framework that explains their behaviour through the lens of
+classical probability, control theory, and Bayesian statistics remains
+fragmented.
+
+In this work, we propose that three classical formalisms---hidden Markov
+processes, stochastic optimal control, and Bayesian inference---each capture a
+complementary facet of transformer behaviour, and that together they form a
+coherent and mutually reinforcing picture.
+
+\paragraph{Core thesis.}
+Let $\bm{h}_t \in \R^d$ denote the hidden representation of a transformer at
+decoding step $t$, and let $x_t \in \vocab$ denote the emitted token. We argue:
+\begin{enumerate}[label=(\roman*)]
+  \item The stochastic process $\{(\bm{h}_t, x_t)\}_{t \geq 1}$ constitutes a
+        \emph{hidden Markov process} on a continuous state space with
+        exponentially decaying memory.
+  \item Autoregressive generation solves a \emph{stochastic optimal control
+        problem} in which $\bm{h}_t$ is the state, $x_t$ is the action, and the
+        model has internalised an approximate value function.
+  \item The model parameters encode a \emph{Bayesian prior} over sequences that
+        is updated in-context via amortised approximate inference.
+\end{enumerate}
+
+\paragraph{Notation.} Throughout, we use $\vocab$ for the token vocabulary
+(finite, $|\vocab| = V$), $d$ for the hidden dimension, $T$ for the sequence
+length or horizon, $\bm{x}_{1:t} = (x_1, \ldots, x_t)$ for token prefixes, and
+$\bm{h}_t \in \R^d$ for the hidden state at step $t$. Probability measures are
+denoted $\Prob$, densities $p$, and expectations $\E$. Parameters of the model
+are collectively denoted $\theta \in \Theta$.
+
+%=============================================================================
+\section{Preliminaries}\label{sec:prelim}
+%=============================================================================
+
+\subsection{Markov Chains on General State Spaces}
+
+\begin{definition}[Markov kernel]
+Let $(\cS, \cB(\cS))$ be a measurable space. A \emph{Markov kernel} (or
+transition kernel) is a map $\kappa: \cS \times \cB(\cS) \to [0,1]$ such that
+(i) for each $s \in \cS$, $\kappa(s, \cdot)$ is a probability measure on
+$\cB(\cS)$; and (ii) for each $B \in \cB(\cS)$, $\kappa(\cdot, B)$ is
+measurable.
+\end{definition}
+
+\begin{definition}[Markov chain on a general state space]
+A sequence of random variables $\{S_t\}_{t \geq 0}$ taking values in $\cS$ is a
+\emph{Markov chain} with kernel $\kappa$ if for all $t$ and all
+$B \in \cB(\cS)$,
+\[
+  \Prob(S_{t+1} \in B \mid S_0, \ldots, S_t) = \kappa(S_t, B) \quad \text{a.s.}
+\]
+\end{definition}
+
+\begin{definition}[Ergodicity and mixing]\label{def:ergodic}
+A Markov chain with kernel $\kappa$ and stationary distribution $\pi$ is
+\emph{geometrically ergodic} if there exists $\rho \in (0,1)$ and a measurable
+function $M: \cS \to [0,\infty)$ such that for all $s \in \cS$ and $t \geq 0$,
+\[
+  \|\kappa^t(s, \cdot) - \pi(\cdot)\|_{\TV} \leq M(s)\, \rho^t,
+\]
+where $\|\cdot\|_{\TV}$ denotes the total variation norm and $\kappa^t$ is the
+$t$-fold composition of $\kappa$.
+\end{definition}
+
+The quantity $\tau_{\mathrm{mix}} = \lceil -1/\log \rho \rceil$ is the
+\emph{mixing time}: beyond this horizon, the chain's distribution is
+$\varepsilon$-close to $\pi$ regardless of the initial state.
+
+\subsection{Hidden Markov Models}
+
+\begin{definition}[Hidden Markov Model]
+A \emph{Hidden Markov Model} (HMM) is a tuple $(\cS, \cX, \kappa, g, \nu)$
+where:
+\begin{itemize}[nosep]
+  \item $\cS$ is the (possibly continuous) hidden state space,
+  \item $\cX$ is the observation space,
+  \item $\kappa$ is a Markov transition kernel on $\cS$,
+  \item $g: \cS \to \cP(\cX)$ is the emission distribution,
+  \item $\nu \in \cP(\cS)$ is the initial distribution.
+\end{itemize}
+The generative model factorises as
+\[
+  s_0 \sim \nu, \qquad
+  s_{t+1} \sim \kappa(s_t, \cdot), \qquad
+  x_t \sim g(s_t).
+\]
+\end{definition}
+
+\subsection{Stochastic Optimal Control}
+
+\begin{definition}[Discrete-time stochastic control problem]
+A \emph{stochastic optimal control problem} is specified by:
+\begin{itemize}[nosep]
+  \item A state space $\cS$, action space $\cA$,
+  \item State dynamics $s_{t+1} \sim f(s_t, a_t, \xi_t)$ where
+        $\xi_t$ is i.i.d.\ noise,
+  \item A per-step reward $r: \cS \times \cA \to \R$,
+  \item A terminal reward $R_T: \cS \to \R$,
+  \item A discount factor $\gamma \in (0,1]$.
+\end{itemize}
+The objective is to find a policy $\pi: \cS \to \cP(\cA)$ maximising
+\[
+  J(\pi) = \E^{\pi}\!\left[\sum_{t=0}^{T} \gamma^t\, r(s_t, a_t) + \gamma^T R_T(s_T)\right].
+\]
+\end{definition}
+
+\begin{theorem}[Bellman optimality, discrete-time]\label{thm:bellman}
+The optimal value function $V^*: \cS \to \R$ satisfies
+\[
+  V^*(s) = \max_{a \in \cA}\!\left\{r(s,a) + \gamma\, \E_{s' \sim f(s,a,\cdot)}[V^*(s')]\right\}
+\]
+and the optimal policy is $\pi^*(s) = \argmax_{a}\{r(s,a) + \gamma\,\E[V^*(f(s,a,\xi))]\}$.
+\end{theorem}
+
+\subsection{Bayesian Inference}
+
+\begin{definition}[Bayesian framework]
+Given a prior $p(\theta)$ over parameters and a likelihood $p(\cD|\theta)$ for
+data $\cD$, the posterior is
+\[
+  p(\theta|\cD) = \frac{p(\cD|\theta)\,p(\theta)}{p(\cD)}, \qquad
+  p(\cD) = \int p(\cD|\theta)\,p(\theta)\,d\theta.
+\]
+\end{definition}
+
+In the sequel, we will use the Bayesian framework not over model parameters
+$\theta$ (which are fixed at inference time) but over \emph{sequence
+continuations}: the model parameters define a prior over token sequences, and
+the observed context serves as evidence.
+
+
+%=============================================================================
+\section{The Transformer as a Hidden Markov Process}\label{sec:hmm}
+%=============================================================================
+
+\subsection{Defining the Hidden State}
+
+Consider a transformer with parameters $\theta$ operating autoregressively.
+At decoding step $t$, the model has consumed tokens $\bm{x}_{1:t}$ and
+produced an internal representation that we denote $\bm{h}_t \in \R^d$.
+Formally, $\bm{h}_t$ comprises the residual stream activations and, in
+cached inference, the key-value (KV) cache:
+\[
+  \bm{h}_t = \Phi_\theta(\bm{x}_{1:t}),
+\]
+where $\Phi_\theta: \vocab^{\leq T} \to \R^d$ is the deterministic encoding
+map defined by the transformer's forward pass.
+
+\begin{proposition}[Markov property of the hidden state]\label{prop:markov}
+The next-token distribution depends on $\bm{x}_{1:t}$ \emph{only through}
+$\bm{h}_t$:
+\[
+  p_\theta(x_{t+1} \mid \bm{x}_{1:t})
+  = p_\theta(x_{t+1} \mid \bm{h}_t)
+  = \softmax\!\bigl(W_{\mathrm{out}}\, \bm{h}_t^{(L)}\bigr)_{x_{t+1}},
+\]
+where $\bm{h}_t^{(L)}$ is the final-layer representation and $W_{\mathrm{out}}
+\in \R^{V \times d}$ is the unembedding matrix. Hence the pair process
+$\{(\bm{h}_t, x_t)\}_{t \geq 1}$ is Markovian with transition kernel
+\begin{align}
+  \kappa_\theta\bigl((\bm{h}_t, x_t),\, B \times \{v\}\bigr)
+  &= p_\theta(v \mid \bm{h}_t)\cdot
+     \ind\!\bigl[\Phi_\theta(\bm{x}_{1:t}, v) \in B\bigr]
+     \label{eq:kernel}
+\end{align}
+for $B \in \cB(\R^d)$ and $v \in \vocab$.
+\end{proposition}
+
+\begin{proof}
+Since $\bm{h}_{t+1} = \Phi_\theta(\bm{x}_{1:t}, x_{t+1})$ is a deterministic
+function of $(\bm{h}_t, x_{t+1})$ (via the incremental KV-cache update), and
+$x_{t+1}$ is sampled from $p_\theta(\cdot \mid \bm{h}_t)$, the state at
+$t+1$ depends on the past only through $(\bm{h}_t, x_t)$. The emission
+$x_{t+1}$ depends only on $\bm{h}_t$. This establishes the Markov property.
+\end{proof}
+
+\begin{remark}[Non-trivial Markov structure]
+One might object that this is ``trivially'' Markovian since $\bm{h}_t$
+deterministically encodes the full history $\bm{x}_{1:t}$. However, the
+claim becomes substantive when we consider the \emph{effective} memory of
+the process---i.e., the degree to which distant tokens actually influence
+future predictions through the hidden state.
+\end{remark}
+
+\subsection{The HMM Interpretation}
+
+\begin{definition}[Transformer HMM]\label{def:thmm}
+The \emph{Transformer Hidden Markov Model} (T-HMM) is the tuple
+$(\cS, \vocab, \kappa_\theta, g_\theta, \nu_\theta)$ where:
+\begin{itemize}[nosep]
+  \item $\cS = \R^d$ is the continuous hidden state space,
+  \item $\vocab$ is the finite token vocabulary (observation space),
+  \item $\kappa_\theta$ is the kernel from~\eqref{eq:kernel},
+  \item $g_\theta(\bm{h}) = \softmax(W_{\mathrm{out}}\, \bm{h}^{(L)})$ is the
+        emission distribution,
+  \item $\nu_\theta$ is the distribution over initial hidden states induced by
+        the start-of-sequence token.
+\end{itemize}
+\end{definition}
+
+Unlike classical HMMs with finite discrete hidden states, the T-HMM has a
+continuous, high-dimensional hidden space with \emph{deterministic} state
+transitions conditioned on the emitted token. This places it in the family of
+\emph{deterministic-transition HMMs}, closely related to predictive state
+representations and observable operator models.
+
+\subsection{Exponential Decay of Influence}\label{sec:decay}
+
+The central empirical and theoretical observation is that the influence of
+token $x_s$ on the prediction at step $t \gg s$ decays with the lag $t - s$.
+
+\begin{definition}[Influence function]
+The \emph{influence} of token position $s$ on the prediction at position $t$ is
+\[
+  I(s, t) \triangleq
+  \E\!\left[\KL\!\Big(
+    p_\theta(\cdot \mid \bm{x}_{1:t})
+    \;\Big\|\;
+    p_\theta(\cdot \mid \bm{x}_{1:t}^{\setminus s})
+  \Big)\right],
+\]
+where $\bm{x}_{1:t}^{\setminus s}$ denotes the sequence with token $x_s$
+replaced by a draw from the marginal $p_\theta(x_s)$.
+\end{definition}
+
+\begin{theorem}[Exponential influence decay]\label{thm:decay}
+Suppose the hidden-state transition map $F_\theta: \R^d \times \vocab \to \R^d$
+defined by $\bm{h}_{t+1} = F_\theta(\bm{h}_t, x_{t+1})$ is Lipschitz in its
+first argument with constant $\lambda < 1$ uniformly over $\vocab$:
+\[
+  \|F_\theta(\bm{h}, v) - F_\theta(\bm{h}', v)\| \leq \lambda\, \|\bm{h} - \bm{h}'\|
+  \quad \forall\, v \in \vocab,\; \bm{h}, \bm{h}' \in \R^d.
+\]
+Then the influence decays geometrically:
+\[
+  I(s, t) \leq C\, \lambda^{2(t-s)}
+\]
+for a constant $C$ depending on the Lipschitz constant of $g_\theta$ and the
+diameter of the hidden state space.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+A perturbation $\delta \bm{h}_s = \bm{h}_s - \bm{h}_s'$ at step $s$ propagates
+forward as
+\[
+  \|\delta \bm{h}_t\| \leq \lambda^{t-s}\, \|\delta \bm{h}_s\|
+\]
+by iterated application of the contraction. Since $g_\theta$ is Lipschitz (the
+softmax composed with a linear map), the KL divergence between the resulting
+emission distributions is bounded by $O(\|\delta \bm{h}_t\|^2)$ via Pinsker's
+inequality and a local quadratic bound on KL, giving the $\lambda^{2(t-s)}$
+rate. \qed
+\end{proof}
+
+\begin{remark}[Connection to mixing]
+In the language of \Cref{def:ergodic}, the T-HMM is geometrically ergodic
+with rate $\rho = \lambda^2$ whenever the contraction condition holds. The
+mixing time $\tau_{\mathrm{mix}} = O(1/|\log \lambda|)$ determines the
+effective memory horizon of the process.
+\end{remark}
+
+\begin{remark}[Attention as non-uniform contraction]
+In practice, multi-head attention can selectively break the contraction for
+specific positions (e.g., syntactic anchors, proper nouns), creating
+\emph{non-uniform} decay. The process is better modelled as a
+\emph{time-inhomogeneous} Markov chain with position-dependent contraction
+rates $\lambda_t$. The cumulative decay over a window $[s, t]$ is then
+$\prod_{\tau=s}^{t-1} \lambda_\tau$, which is still exponentially small when
+$\bar{\lambda} = (\prod \lambda_\tau)^{1/(t-s)} < 1$ on average.
+\end{remark}
+
+\subsection{Long-Run Memorylessness}
+
+\begin{corollary}[Asymptotic memorylessness]\label{cor:memoryless}
+Under the contraction condition of \Cref{thm:decay}, for any $\varepsilon > 0$
+there exists $\tau(\varepsilon)$ such that for all $t - s > \tau(\varepsilon)$,
+\[
+  I(s, t) < \varepsilon.
+\]
+In the limit $t \to \infty$ (with stationarity), the process is \emph{memoryless
+in the long run}: the predictive distribution converges to a fixed point
+independent of arbitrarily distant history.
+\end{corollary}
+
+This formalises the intuition: at every step, the process has \emph{local
+memory}---the current state $\bm{h}_t$ fully determines the next transition.
+But the influence of any particular historical token on that state is
+\emph{vanishingly small} beyond the mixing horizon. The process is neither
+memoryless in the white-noise sense (where the present carries no information)
+nor long-memory in the fractional Brownian motion sense. It occupies the
+intermediate regime of \emph{exponentially decaying, finite-horizon memory}.
+
+
+%=============================================================================
+\section{Autoregressive Generation as Optimal Control}\label{sec:control}
+%=============================================================================
+
+We now reinterpret the generative process through the lens of stochastic
+optimal control.
+
+\subsection{The Control Problem Formulation}
+
+\begin{definition}[Autoregressive control problem]\label{def:arp}
+Define the \emph{autoregressive control problem} (ACP) as follows:
+\begin{itemize}[nosep]
+  \item \textbf{State space:} $\cS = \R^d$ (hidden representations).
+  \item \textbf{Action space:} $\cA = \vocab$ (token vocabulary).
+  \item \textbf{Dynamics:} $\bm{h}_{t+1} = F_\theta(\bm{h}_t, x_{t+1})$
+        (deterministic given action).
+  \item \textbf{Policy:} $\pi_\theta(\cdot \mid \bm{h}_t) = g_\theta(\bm{h}_t)
+        \in \cP(\vocab)$.
+  \item \textbf{Reward:} To be specified by the training objective.
+  \item \textbf{Horizon:} $T$ (sequence length or end-of-sequence).
+\end{itemize}
+\end{definition}
+
+\subsection{Pretraining as Maximum Likelihood Control}
+
+Under maximum likelihood training, the implicit reward is the log-probability of
+the observed next token:
+\[
+  r_{\mathrm{MLE}}(\bm{h}_t, x_{t+1}) = \log p_\theta(x_{t+1} \mid \bm{h}_t).
+\]
+The pretraining objective maximises the cumulative reward over the data
+distribution:
+\[
+  J_{\mathrm{MLE}}(\theta)
+  = \E_{\bm{x} \sim \cD}\!\left[\sum_{t=0}^{T-1} \log p_\theta(x_{t+1} \mid \bm{h}_t)\right]
+  = \E_{\bm{x} \sim \cD}[\log p_\theta(\bm{x})].
+\]
+
+\begin{proposition}[MLE as undiscounted control]
+Maximum likelihood pretraining is equivalent to solving the ACP with
+$\gamma = 1$, $r(\bm{h}_t, a) = \log p_\theta(a \mid \bm{h}_t)$, and $R_T = 0$,
+under the constraint that the policy matches the model's own conditional
+distribution.
+\end{proposition}
+
+This is a \emph{self-consistent} control problem: the reward function
+\emph{is} the policy's own log-probability, and training adjusts $\theta$
+until the policy is optimal under its own induced reward.
+
+\subsection{RLHF as Reward Shaping}
+
+Reinforcement Learning from Human Feedback introduces an external reward
+signal. Let $R_\phi: \vocab^T \to \R$ denote a learned reward model with
+parameters $\phi$, trained on human preference data.
+
+\begin{definition}[RLHF objective]
+The RLHF objective is
+\begin{equation}\label{eq:rlhf_obj}
+  J_{\mathrm{RLHF}}(\theta)
+  = \E_{\bm{x} \sim \pi_\theta}\!\big[R_\phi(\bm{x})\big]
+    - \beta\, \KL\!\big(\pi_\theta \| \pi_{\mathrm{ref}}\big),
+\end{equation}
+where $\pi_{\mathrm{ref}}$ is the pretrained (reference) policy and
+$\beta > 0$ controls the strength of the KL penalty.
+\end{definition}
+
+\begin{theorem}[Optimal RLHF policy]\label{thm:rlhf_optimal}
+The policy maximising~\eqref{eq:rlhf_obj} has the Gibbs form
+\begin{equation}\label{eq:gibbs}
+  \pi^*_\theta(\bm{x}) \propto \pi_{\mathrm{ref}}(\bm{x})\,
+  \exp\!\bigl(\beta^{-1} R_\phi(\bm{x})\bigr).
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+This is the standard result from the variational characterisation of the
+KL-regularised optimisation. The functional
+$\cL[\pi] = \E_\pi[R_\phi] - \beta\,\KL(\pi\|\pi_{\mathrm{ref}})$
+is strictly concave in $\pi$ and its unique maximiser is the tilted
+distribution~\eqref{eq:gibbs}. \qed
+\end{proof}
+
+\begin{remark}[Control interpretation]
+In the control framework, RLHF replaces the self-referential MLE reward with a
+\emph{trajectory-level} reward $R_\phi(\bm{x}_{1:T})$, and the KL penalty
+acts as a \emph{control cost} penalising deviation from the reference dynamics.
+The optimal policy~\eqref{eq:gibbs} is precisely the solution to the
+KL-regularised stochastic control problem, a well-known result in
+linearly-solvable MDPs and path-integral control.
+\end{remark}
+
+\subsection{The Partition Function and the Free-Boundary Bellman Equation}
+
+The key insight is that RLHF rewards \emph{entire sequences}, not individual
+tokens. A model that must emit tokens sequentially but is evaluated on
+trajectory-level reward is \emph{forced} to decompose that trajectory reward
+into per-step decisions. Moreover, the horizon $T$ is not fixed: the model
+decides \emph{when to stop} by emitting a distinguished end-of-sequence token
+$\langle\mathrm{eos}\rangle \in \vocab$. This makes $T$ endogenous---the
+stopping time is part of the solution, not a given.
+
+\begin{definition}[Stopping time]
+The \emph{generation stopping time} is the random variable
+\[
+  \tau = \inf\{t \geq 1 : x_t = \langle\mathrm{eos}\rangle\},
+\]
+i.e., the first time the model emits the end-of-sequence token. The
+completed sequence is $\bm{x}_{1:\tau}$, and the trajectory reward is
+$R_\phi(\bm{x}_{1:\tau})$.
+\end{definition}
+
+\begin{definition}[Trajectory partition function with endogenous stopping]\label{def:partition}
+For a hidden state $\bm{h}_t$ at step $t$, define the \emph{trajectory
+partition function}
+\begin{equation}\label{eq:partition}
+  Z(\bm{h}_t) \triangleq
+  \E_{\pi_{\mathrm{ref}}}\!\left[
+    \exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:\tau})\bigr)
+    \;\Big|\; \bm{h}_t
+  \right],
+\end{equation}
+where the expectation is over all continuations under $\pi_{\mathrm{ref}}$,
+including the stochastic stopping time $\tau \geq t$.
+\end{definition}
+
+\begin{theorem}[Free-boundary backward recursion]\label{thm:Z_recursion}
+The partition function satisfies the backward recursion
+\begin{equation}\label{eq:Z_backward}
+  Z(\bm{h}_t)
+  = \underbrace{\pi_{\mathrm{ref}}(\langle\mathrm{eos}\rangle \mid \bm{h}_t)
+    \cdot \exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:t})\bigr)}_{\displaystyle
+    S(\bm{h}_t)\;\text{: \emph{stopping value}}}
+  + \underbrace{\sum_{v \neq \langle\mathrm{eos}\rangle}
+    \pi_{\mathrm{ref}}(v \mid \bm{h}_t)
+    \cdot Z\!\bigl(F_\theta(\bm{h}_t, v)\bigr)}_{\displaystyle
+    C(\bm{h}_t)\;\text{: \emph{continuation value}}}.
+\end{equation}
+The stopping value $S(\bm{h}_t)$ is the expected exponentiated reward from
+terminating now; the continuation value $C(\bm{h}_t)$ is the expected
+exponentiated reward from emitting one more non-terminal token and proceeding
+optimally thereafter.
+\end{theorem}
+
+\begin{proof}
+By the law of total expectation, conditioning on whether the next token is
+$\langle\mathrm{eos}\rangle$ or not:
+\begin{align}
+  Z(\bm{h}_t)
+  &= \E_{\pi_{\mathrm{ref}}}\!\left[
+       \exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:\tau})\bigr)
+       \;\Big|\; \bm{h}_t
+     \right] \notag \\
+  &= \pi_{\mathrm{ref}}(\langle\mathrm{eos}\rangle \mid \bm{h}_t)
+     \cdot \exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:t})\bigr) \notag \\
+  &\quad + \sum_{v \neq \langle\mathrm{eos}\rangle}
+     \pi_{\mathrm{ref}}(v \mid \bm{h}_t)
+     \cdot \E_{\pi_{\mathrm{ref}}}\!\left[
+       \exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:\tau})\bigr)
+       \;\Big|\; \bm{h}_{t+1} = F_\theta(\bm{h}_t, v)
+     \right] \notag \\
+  &= S(\bm{h}_t) + C(\bm{h}_t). \tag*{\qed}
+\end{align}
+\end{proof}
+
+\begin{remark}[The free-boundary structure]
+Equation~\eqref{eq:Z_backward} is structurally different from the fixed-horizon
+Bellman equation. In the fixed-horizon case, the terminal condition is given
+at a known $T$. Here, the ``terminal condition'' $\exp(\beta^{-1}
+R_\phi(\bm{x}_{1:t}))$ is available at \emph{every} step---the model can
+always choose to stop. The recursion simultaneously determines:
+\begin{enumerate}[label=(\alph*),nosep]
+  \item The value function $V^*(\bm{h}_t) = \beta \log Z(\bm{h}_t)$.
+  \item The optimal stopping region
+        $\cS^* = \{\bm{h} : S(\bm{h}) \geq C(\bm{h})\}$---the set of
+        hidden states where terminating is preferred to continuing.
+\end{enumerate}
+The stopping boundary $\partial \cS^*$ is not given a priori; it is a
+\emph{free boundary} that emerges from the recursion.
+\end{remark}
+
+\begin{definition}[Soft value function]
+Define the \emph{soft value function} as
+\begin{equation}\label{eq:soft_V}
+  V^*(\bm{h}_t) \triangleq \beta \log Z(\bm{h}_t).
+\end{equation}
+\end{definition}
+
+\begin{theorem}[Free-boundary soft Bellman equation]\label{thm:soft_bellman}
+The soft value function satisfies
+\begin{equation}\label{eq:soft_bellman}
+  \exp\!\bigl(\beta^{-1} V^*(\bm{h}_t)\bigr)
+  = \pi_{\mathrm{ref}}(\langle\mathrm{eos}\rangle \mid \bm{h}_t)
+    \cdot \exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:t})\bigr)
+  + \!\!\sum_{v \neq \langle\mathrm{eos}\rangle}\!\!
+    \pi_{\mathrm{ref}}(v \mid \bm{h}_t)
+    \cdot \exp\!\bigl(\beta^{-1} V^*\!\bigl(F_\theta(\bm{h}_t, v)\bigr)\bigr).
+\end{equation}
+This is the \emph{free-boundary} soft Bellman equation: it is the Bellman
+equation of a linearly-solvable MDP with an endogenous stopping time.
+\end{theorem}
+
+\begin{proof}
+Immediate from \Cref{thm:Z_recursion} and \eqref{eq:soft_V}: apply
+$\beta \log$ to both sides of~\eqref{eq:Z_backward}. \qed
+\end{proof}
+
+\begin{remark}[Connection to optimal stopping theory]
+The recursion~\eqref{eq:soft_bellman} is the \emph{Snell envelope} of the
+process $\{R_\phi(\bm{x}_{1:t})\}_{t \geq 1}$ under the soft-max aggregation
+induced by $\beta$. In the limit $\beta \to 0$ (deterministic policy), it
+reduces to the classical optimal stopping rule:
+\[
+  V^*(\bm{h}_t)
+  = \max\!\Big\{
+      \underbrace{R_\phi(\bm{x}_{1:t})}_{\text{stop}},\;\;
+      \underbrace{\max_{v \neq \langle\mathrm{eos}\rangle}
+        V^*\!\bigl(F_\theta(\bm{h}_t, v)\bigr)}_{\text{continue}}
+    \Big\},
+\]
+which is the Bellman equation of an American option: exercise (emit EOS,
+collect $R_\phi$) or continue (emit another token, reach a potentially
+higher-value state). The optimal stopping boundary $\partial\cS^*$ is
+the \emph{exercise boundary} of this option.
+\end{remark}
+
+\begin{remark}[Backward induction and lookahead]
+The endogenous stopping time forces the model to perform implicit backward
+induction. At each step, the model does not ask ``what is the best
+complete response to the user's query?''---a planning problem requiring
+knowledge of the full trajectory. Instead it asks ``what is the next token
+that brings the hidden state closer to the optimal stopping region while
+accumulating high value-to-go?'' This is a \emph{local} question answered
+by the gradient $\nabla_{\bm{h}} V^*(\bm{h}_t)$: the direction in
+hidden-state space along which the value function increases most steeply
+toward $\cS^*$. The model surfs the value landscape toward the stopping
+boundary, one token at a time.
+
+When this gradient is well-defined and smooth, local hill-climbing in
+advantage space produces globally coherent responses. When it is flat or
+noisy---the model has poor value estimates in that region of hidden
+space---the result is rambling, premature stopping, or inability to
+conclude. The model has lost the gradient toward $\partial\cS^*$.
+\end{remark}
+
+\begin{theorem}[Optimal autoregressive policy via $Z$]\label{thm:opt_policy_Z}
+The optimal policy for the RLHF objective~\eqref{eq:rlhf_obj}, with
+endogenous stopping, factorises autoregressively at each step as
+\begin{equation}\label{eq:opt_policy_Z}
+  \pi^*(v \mid \bm{h}_t)
+  = \pi_{\mathrm{ref}}(v \mid \bm{h}_t)
+    \cdot \frac{Z\!\bigl(F_\theta(\bm{h}_t, v)\bigr)}{Z(\bm{h}_t)},
+    \qquad v \neq \langle\mathrm{eos}\rangle,
+\end{equation}
+and for the stopping action:
+\begin{equation}\label{eq:opt_policy_eos}
+  \pi^*(\langle\mathrm{eos}\rangle \mid \bm{h}_t)
+  = \pi_{\mathrm{ref}}(\langle\mathrm{eos}\rangle \mid \bm{h}_t)
+    \cdot \frac{\exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:t})\bigr)}{Z(\bm{h}_t)}.
+\end{equation}
+The model emits EOS when $R_\phi(\bm{x}_{1:t})$ (the reward from
+stopping) is large relative to $V^*(F_\theta(\bm{h}_t, v))$
+(the value from continuing).
+\end{theorem}
+
+\begin{proof}
+The optimal joint distribution is $\pi^*(\bm{x}_{1:\tau}) \propto
+\pi_{\mathrm{ref}}(\bm{x}_{1:\tau}) \exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau}))$
+by \Cref{thm:rlhf_optimal}, where $\tau$ is the stopping time. Factoring
+autoregressively and using the definition of $Z$:
+
+For $v \neq \langle\mathrm{eos}\rangle$:
+\begin{align}
+  \pi^*(v \mid \bm{h}_t)
+  &= \frac{\sum_{\tau > t} \sum_{\bm{x}_{t+2:\tau}}
+     \pi_{\mathrm{ref}}(v \mid \bm{h}_t)
+     \pi_{\mathrm{ref}}(\bm{x}_{t+2:\tau} \mid F_\theta(\bm{h}_t, v))
+     \exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau}))}{Z(\bm{h}_t)} \notag \\
+  &= \pi_{\mathrm{ref}}(v \mid \bm{h}_t) \cdot
+     \frac{Z(F_\theta(\bm{h}_t, v))}{Z(\bm{h}_t)}.
+\end{align}
+
+For $v = \langle\mathrm{eos}\rangle$ (stopping at step $t+1$, so the
+sequence terminates as $\bm{x}_{1:t+1}$ with $x_{t+1} = \langle\mathrm{eos}\rangle$):
+\begin{align}
+  \pi^*(\langle\mathrm{eos}\rangle \mid \bm{h}_t)
+  &= \frac{\pi_{\mathrm{ref}}(\langle\mathrm{eos}\rangle \mid \bm{h}_t)
+     \cdot \exp(\beta^{-1} R_\phi(\bm{x}_{1:t}))}{Z(\bm{h}_t)}.
+\end{align}
+One can verify that these sum to 1 by~\eqref{eq:Z_backward}. \qed
+\end{proof}
+
+\begin{remark}[The $Z$-ratio as the central object]
+The ratio
+\begin{equation}\label{eq:Z_ratio}
+  \Gamma(\bm{h}_t, v) \triangleq
+  \begin{cases}
+    \dfrac{Z\!\bigl(F_\theta(\bm{h}_t, v)\bigr)}{Z(\bm{h}_t)}
+    & v \neq \langle\mathrm{eos}\rangle, \\[1em]
+    \dfrac{\exp\!\bigl(\beta^{-1} R_\phi(\bm{x}_{1:t})\bigr)}{Z(\bm{h}_t)}
+    & v = \langle\mathrm{eos}\rangle,
+  \end{cases}
+\end{equation}
+is the single mathematical object that unifies all three frameworks, as we
+shall prove in \Cref{sec:unify}. For continuation tokens, $\Gamma$ measures
+the relative value of continuing via $v$. For EOS, $\Gamma$ measures the
+relative value of stopping now versus continuing. The model emits EOS
+when $\Gamma(\bm{h}_t, \langle\mathrm{eos}\rangle)$ dominates all
+$\Gamma(\bm{h}_t, v)$ for $v \neq \langle\mathrm{eos}\rangle$.
+\end{remark}
+
+\begin{corollary}[The model must encode the value function]\label{cor:must_encode}
+Since the RLHF-trained model approximates $\pi^*$, and $\pi^*$ factorises
+through $Z$ via~\eqref{eq:opt_policy_Z}--\eqref{eq:opt_policy_eos}, the
+model's hidden state $\bm{h}_t$ must encode sufficient information to
+approximate both $V^*(\bm{h}_t) = \beta \log Z(\bm{h}_t)$ (the
+continuation value) and $R_\phi(\bm{x}_{1:t})$ (the stopping value).
+The residual stream carries the log-partition function of the
+value-weighted future \emph{and} the current accumulated reward.
+\end{corollary}
+
+\begin{remark}[Chain-of-thought as stopping-time extension]
+Chain-of-thought (CoT) prompting delays the stopping decision by emitting
+intermediate reasoning tokens. In the free-boundary framework, CoT
+shifts the optimal stopping region: the reasoning tokens navigate the
+hidden state to a region where $C(\bm{h}_t) \gg S(\bm{h}_t)$ and then
+eventually to a region where $S(\bm{h}_t)$ is large and
+$R_\phi(\bm{x}_{1:t})$ has been increased by the intervening reasoning.
+The model is given more time to climb the value landscape before being
+forced to exercise the option.
+\end{remark}
+
+\subsection{Pontryagin vs.\ Dynamic Programming}
+
+The dual formulations of optimal control illuminate different aspects of
+transformer behaviour.
+
+\begin{proposition}[Gradient as costate]
+During backpropagation through time (BPTT), the gradient of the loss with
+respect to the hidden state at time $t$,
+\[
+  \bm{\lambda}_t = \frac{\partial \cL}{\partial \bm{h}_t},
+\]
+satisfies the adjoint equation
+\begin{equation}\label{eq:adjoint}
+  \bm{\lambda}_t
+  = \frac{\partial r_t}{\partial \bm{h}_t}
+    + \left(\frac{\partial F_\theta}{\partial \bm{h}_t}\right)^\top \bm{\lambda}_{t+1},
+\end{equation}
+which is the discrete-time Pontryagin costate equation. The gradient
+$\bm{\lambda}_t$ decays backward with rate governed by the spectral radius of
+$\partial F_\theta / \partial \bm{h}_t$---the same quantity controlling forward
+influence decay (\Cref{sec:decay}).
+\end{proposition}
+
+\begin{remark}[Symmetry of forward and backward decay]
+The contraction rate $\lambda$ in \Cref{thm:decay} governs both:
+\begin{enumerate}[label=(\alph*),nosep]
+  \item \emph{Forward}: decay of influence of past tokens on future predictions.
+  \item \emph{Backward}: decay of gradient signal (vanishing gradients in BPTT).
+\end{enumerate}
+This is not a coincidence: it is the primal-dual symmetry of optimal control,
+where the forward dynamics and backward adjoint share the same Jacobian
+structure.
+\end{remark}
+
+
+%=============================================================================
+\section{The Bayesian Interpretation}\label{sec:bayes}
+%=============================================================================
+
+\subsection{Pretrained Weights as a Prior Measure}
+
+\begin{definition}[Sequence prior]
+The pretrained model $p_\theta$ defines a probability measure $\mu_\theta$ over
+$\vocab^* = \bigcup_{t=1}^{\infty} \vocab^t$ (the space of all finite token
+sequences, where termination occurs at the first
+$\langle\mathrm{eos}\rangle$ emission) via the autoregressive factorisation:
+\begin{equation}\label{eq:prior}
+  \mu_\theta(\bm{x}_{1:\tau})
+  = \prod_{t=1}^{\tau} p_\theta(x_t \mid \bm{x}_{1:t-1}),
+\end{equation}
+where $\tau = \inf\{t : x_t = \langle\mathrm{eos}\rangle\}$ is the stopping
+time. We call $\mu_\theta$ the \emph{pretrained prior}. It is a measure over
+variable-length sequences with endogenous termination.
+\end{definition}
+
+\begin{proposition}[Embedding space as prior geometry]\label{prop:prior_geom}
+The token embedding matrix $W_{\mathrm{emb}} \in \R^{d \times V}$ induces a
+geometry on $\vocab$ via the inner product
+\[
+  \langle v, w \rangle_{\mathrm{emb}} = \bm{e}_v^\top \bm{e}_w,
+\]
+where $\bm{e}_v = W_{\mathrm{emb}}[\cdot, v]$. This geometry encodes the
+prior's belief about semantic relatedness: tokens that are substitutable
+in many contexts (and hence have similar conditional distributions under
+$\mu_\theta$) are embedded nearby. Formally, if
+$\KL(p_\theta(\cdot | x_t = v) \| p_\theta(\cdot | x_t = w))$ is small for
+most contexts, then $\|\bm{e}_v - \bm{e}_w\|$ tends to be small.
+\end{proposition}
+
+This establishes that the embedding space is not merely a lookup table but a
+\emph{learned prior geometry} encoding distributional similarity.
+
+\subsection{RLHF as Prior Reweighting}
+
+\begin{theorem}[RLHF posterior]\label{thm:rlhf_bayes}
+The optimal RLHF policy~\eqref{eq:gibbs} has a Bayesian interpretation:
+\begin{align}
+  \underbrace{\pi^*(\bm{x})}_{\text{posterior}}
+  &\propto
+  \underbrace{\mu_\theta(\bm{x})}_{\text{prior}} \cdot
+  \underbrace{\exp\!\bigl(\beta^{-1} R_\phi(\bm{x})\bigr)}_{\text{likelihood (value)}}.
+  \label{eq:bayes_rlhf}
+\end{align}
+The reward model $R_\phi$ plays the role of a log-likelihood, and $\beta$
+controls the strength of the evidence relative to the prior. As
+$\beta \to \infty$, $\pi^* \to \mu_\theta$ (prior dominates); as
+$\beta \to 0$, $\pi^*$ concentrates on $\argmax R_\phi$ (likelihood
+dominates).
+\end{theorem}
+
+\begin{remark}[Three layers of prior structure]
+The full Bayesian hierarchy in a deployed conversational model comprises:
+\begin{enumerate}[nosep]
+  \item \textbf{Pretrained prior} $\mu_\theta$: broad beliefs about linguistic
+        plausibility, learned from the training corpus. Encodes \emph{what can
+        follow what}.
+  \item \textbf{RLHF-shaped prior} $\pi^*_\theta$: the prior reweighted by
+        human values. Encodes \emph{what should follow what} in general.
+  \item \textbf{In-context posterior} $\pi^*_\theta(\cdot \mid \bm{c})$: the
+        RLHF prior further updated by the conversation context $\bm{c}$.
+        Encodes \emph{what should follow what for this user, now}.
+\end{enumerate}
+\end{remark}
+
+\subsection{In-Context Learning as Amortised Bayesian Inference}
+
+\begin{definition}[In-context posterior]
+Given a conversation context $\bm{c} = (c_1, \ldots, c_m)$ comprising the
+user's messages and the model's prior responses, the \emph{in-context posterior}
+over continuations $\bm{x}_{m+1:T}$ is
+\begin{equation}\label{eq:icl_posterior}
+  p_\theta(\bm{x}_{m+1:T} \mid \bm{c})
+  = \frac{\mu_\theta(\bm{c},\, \bm{x}_{m+1:T})}{\mu_\theta(\bm{c})}.
+\end{equation}
+\end{definition}
+
+\begin{theorem}[ICL as amortised variational inference]\label{thm:icl}
+The transformer's forward pass implements an \emph{amortised} approximation to
+Bayesian updating. Specifically, the hidden state $\bm{h}_m = \Phi_\theta(\bm{c})$
+serves as a \emph{sufficient statistic} for the posterior over continuations:
+\[
+  p_\theta(\bm{x}_{m+1:T} \mid \bm{c})
+  = p_\theta(\bm{x}_{m+1:T} \mid \bm{h}_m).
+\]
+The attention mechanism computes the posterior by (approximately) evaluating the
+evidence integral
+\[
+  p_\theta(\bm{c}) = \sum_{\bm{z}} p_\theta(\bm{c} \mid \bm{z})\, p_\theta(\bm{z}),
+\]
+where $\bm{z}$ ranges over latent ``task'' or ``user'' representations, and the
+summation is approximated by the feed-forward network's learned amortisation.
+\end{theorem}
+
+\begin{remark}[Conversational Bayesian updating]
+In a multi-turn conversation, each user message $c_t$ serves as new evidence
+that updates the posterior:
+\begin{equation}\label{eq:conv_update}
+  p_\theta(\bm{z} \mid c_1, \ldots, c_t)
+  \propto p_\theta(c_t \mid \bm{z})\, p_\theta(\bm{z} \mid c_1, \ldots, c_{t-1}).
+\end{equation}
+The model is inferring a latent representation $\bm{z}$ of the user's intent,
+expertise level, communication style, and desired outcomes. This posterior
+concentrates over the course of the conversation, explaining why model responses
+become more tailored as the dialogue progresses.
+\end{remark}
+
+\subsection{Posterior Concentration and Prompt Engineering}
+
+\begin{proposition}[Prompt specificity controls posterior width]\label{prop:prompt}
+Let $\bm{c}$ be a prompt and let $\cH_\theta(\bm{c})$ denote the entropy of
+the predictive distribution:
+\[
+  \cH_\theta(\bm{c})
+  = -\sum_{v \in \vocab} p_\theta(v \mid \bm{c})\, \log p_\theta(v \mid \bm{c}).
+\]
+More specific prompts yield lower entropy (tighter posteriors):
+\[
+  \bm{c} \sqsubseteq \bm{c}' \quad \Longrightarrow \quad
+  \E[\cH_\theta(\bm{c}')] \leq \E[\cH_\theta(\bm{c})],
+\]
+where $\sqsubseteq$ denotes that $\bm{c}'$ is an extension (refinement) of
+$\bm{c}$, and the expectation is over the randomness of the extension.
+This follows directly from the information-theoretic data processing inequality.
+\end{proposition}
+
+\begin{corollary}[Prompt engineering as likelihood design]
+Prompt engineering is the craft of constructing a context $\bm{c}$ that serves
+as an effective likelihood function: one that concentrates the posterior
+$p_\theta(\cdot \mid \bm{c})$ onto the desired region of sequence space.
+A vague prompt is a weak likelihood (flat, uninformative); a precise prompt
+is a strong likelihood (peaked, informative).
+\end{corollary}
+
+%=============================================================================
+\section{Unification: The Trinity}\label{sec:unify}
+%=============================================================================
+
+We now prove that the three perspectives developed in
+Sections~\ref{sec:hmm}--\ref{sec:bayes} are not merely analogies but are
+\emph{mathematically identical} descriptions of the same object: the
+partition-function ratio $\Gamma(\bm{h}_t, v)$ from~\eqref{eq:Z_ratio}.
+
+\subsection{The Pivotal Object}
+
+Recall from \Cref{thm:opt_policy_Z} that the optimal RLHF policy at each
+step takes the form
+$\pi^*(v \mid \bm{h}_t)
+= \pi_{\mathrm{ref}}(v \mid \bm{h}_t) \cdot \Gamma(\bm{h}_t, v)$
+for all $v \in \vocab$ (including $\langle\mathrm{eos}\rangle$), where
+$\Gamma$ is defined by~\eqref{eq:Z_ratio}. The following theorem
+establishes that $\Gamma$ is simultaneously the operative object in all
+three frameworks---and that the endogenous stopping decision is naturally
+embedded in each.
+
+\subsection{The Central Equivalence}
+
+\begin{theorem}[The Trinity]\label{thm:trinity}
+Let $\pi_{\mathrm{ref}}$ be a pretrained autoregressive policy with hidden
+states $\bm{h}_t = \Phi_\theta(\bm{x}_{1:t})$, let
+$R_\phi: \vocab^* \to \R$ be a trajectory-level reward defined on
+variable-length sequences, and let $\pi^*$ be the optimal policy of the
+KL-regularised objective~\eqref{eq:rlhf_obj} with endogenous stopping.
+Then the ratio $\Gamma(\bm{h}_t, v)$ from~\eqref{eq:Z_ratio} admits
+three equivalent characterisations:
+
+\medskip
+\noindent\textbf{(I) Optimal Control: Exponentiated Advantage with Stopping.}
+
+For continuation tokens $v \neq \langle\mathrm{eos}\rangle$:
+\begin{equation}\label{eq:trinity_control}
+  \Gamma(\bm{h}_t, v)
+  = \exp\!\bigl(\beta^{-1} A^*(\bm{h}_t, v)\bigr),
+\end{equation}
+where the \emph{soft advantage function} is
+$A^*(\bm{h}_t, v) = V^*(F_\theta(\bm{h}_t, v)) - V^*(\bm{h}_t)$
+and $V^* = \beta \log Z$ satisfies the free-boundary soft Bellman
+equation~\eqref{eq:soft_bellman}.
+
+For the stopping action:
+\begin{equation}\label{eq:trinity_control_eos}
+  \Gamma(\bm{h}_t, \langle\mathrm{eos}\rangle)
+  = \exp\!\bigl(\beta^{-1} [R_\phi(\bm{x}_{1:t}) - V^*(\bm{h}_t)]\bigr).
+\end{equation}
+The model stops when the immediate reward $R_\phi(\bm{x}_{1:t})$ exceeds
+the value-to-go $V^*(\bm{h}_t)$: the option is exercised when the
+current payoff dominates the expected future payoff.
+
+\medskip
+\noindent\textbf{(II) Bayesian Inference: Sequential Likelihood Ratio with
+Stopping as Commitment.}
+\begin{equation}\label{eq:trinity_bayes}
+  \Gamma(\bm{h}_t, v)
+  = \frac{\pi^*(v \mid \bm{h}_t)}{\pi_{\mathrm{ref}}(v \mid \bm{h}_t)}
+  = \frac{\text{posterior predictive}}{\text{prior predictive}},
+\end{equation}
+for all $v \in \vocab$ (including $\langle\mathrm{eos}\rangle$). For
+continuation tokens, $\Gamma$ measures how much choosing $v$ shifts the
+marginal likelihood of producing a high-value trajectory. For
+$v = \langle\mathrm{eos}\rangle$, $\Gamma$ measures the posterior
+probability that the \emph{evidence is sufficient}: stopping corresponds
+to the Bayesian decision that no further tokens would improve the expected
+reward. This is the \emph{sequential probability ratio test} (SPRT) of
+Wald: the model continues gathering ``evidence'' (emitting tokens) until
+the posterior concentrates enough to commit.
+
+\medskip
+\noindent\textbf{(III) Hidden Markov Model: Emission-Reweighted Transition
+with Absorbing State.}
+\begin{equation}\label{eq:trinity_hmm}
+  \Gamma(\bm{h}_t, v)
+  = \frac{\kappa^*\bigl((\bm{h}_t, x_t),\, F_\theta(\bm{h}_t, v) \times \{v\}\bigr)}%
+         {\kappa_{\mathrm{ref}}\bigl((\bm{h}_t, x_t),\, F_\theta(\bm{h}_t, v) \times \{v\}\bigr)},
+\end{equation}
+where $\kappa^*$ is the transition kernel of the hidden Markov process under
+$\pi^*$ and $\kappa_{\mathrm{ref}}$ is the kernel under $\pi_{\mathrm{ref}}$.
+For $v = \langle\mathrm{eos}\rangle$, the transition leads to the
+\emph{absorbing state}: the HMM is killed. The optimal HMM reweights
+the absorption probability relative to the reference HMM by
+$\Gamma(\bm{h}_t, \langle\mathrm{eos}\rangle)$, increasing it when
+stopping is advantageous and decreasing it when continuation is preferred.
+\end{theorem}
+
+\begin{proof}
+We prove each characterisation and their mutual equivalence.
+
+\medskip
+\noindent\textbf{Proof of (I).}
+For continuation tokens $v \neq \langle\mathrm{eos}\rangle$,
+by definition~\eqref{eq:soft_V}:
+\[
+  \Gamma(\bm{h}_t, v)
+  = \frac{Z(F_\theta(\bm{h}_t, v))}{Z(\bm{h}_t)}
+  = \frac{\exp(\beta^{-1} V^*(F_\theta(\bm{h}_t, v)))}%
+         {\exp(\beta^{-1} V^*(\bm{h}_t))}
+  = \exp\!\bigl(\beta^{-1} A^*(\bm{h}_t, v)\bigr).
+\]
+For $v = \langle\mathrm{eos}\rangle$:
+\[
+  \Gamma(\bm{h}_t, \langle\mathrm{eos}\rangle)
+  = \frac{\exp(\beta^{-1} R_\phi(\bm{x}_{1:t}))}%
+         {\exp(\beta^{-1} V^*(\bm{h}_t))}
+  = \exp\!\bigl(\beta^{-1}[R_\phi(\bm{x}_{1:t}) - V^*(\bm{h}_t)]\bigr).
+\]
+The stopping advantage $R_\phi(\bm{x}_{1:t}) - V^*(\bm{h}_t)$ is positive
+precisely on the optimal stopping region $\cS^*$: the model stops when the
+immediate reward exceeds the continuation value. The Bellman
+decomposition---including the stopping boundary---is forced by the structure
+of the problem: trajectory-level reward with sequential token emission and
+endogenous termination. \qed
+
+\medskip
+\noindent\textbf{Proof of (II).}
+From \Cref{thm:opt_policy_Z},
+$\pi^*(v \mid \bm{h}_t) = \pi_{\mathrm{ref}}(v \mid \bm{h}_t) \cdot
+\Gamma(\bm{h}_t, v)$ for all $v \in \vocab$, so
+\[
+  \Gamma(\bm{h}_t, v)
+  = \frac{\pi^*(v \mid \bm{h}_t)}{\pi_{\mathrm{ref}}(v \mid \bm{h}_t)}.
+\]
+Now, $\pi^*(\bm{x}_{1:\tau}) \propto \pi_{\mathrm{ref}}(\bm{x}_{1:\tau})
+\exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau}))$ is a Bayesian posterior with
+prior $\pi_{\mathrm{ref}}$ and log-likelihood $\beta^{-1} R_\phi$
+(\Cref{thm:rlhf_bayes}).
+
+For continuation tokens, $\Gamma$ is the per-step likelihood ratio:
+how much choosing $v$ updates the belief that the trajectory will be
+high-value. For $v = \langle\mathrm{eos}\rangle$, $\Gamma$ is the
+\emph{commitment ratio}: it measures the posterior belief that the
+accumulated evidence (tokens emitted so far) is sufficient to achieve
+high reward without further generation. This is precisely the stopping
+rule of the \emph{sequential probability ratio test} (Wald, 1945):
+continue sampling (emitting tokens) until the accumulated evidence
+crosses a threshold, then commit (emit EOS).
+
+The sequential factorisation extends to variable-length sequences:
+\begin{equation}\label{eq:sequential_bayes}
+  \frac{\pi^*(\bm{x}_{1:\tau})}{\pi_{\mathrm{ref}}(\bm{x}_{1:\tau})}
+  = \prod_{t=1}^{\tau} \Gamma(\bm{h}_{t-1}, x_t),
+\end{equation}
+where the final factor $\Gamma(\bm{h}_{\tau-1}, \langle\mathrm{eos}\rangle)$
+encodes the stopping decision. The trajectory-level Bayes factor decomposes
+as a product of per-step likelihood ratios, with the number of factors
+itself being a random variable determined by the stopping rule. \qed
+
+\medskip
+\noindent\textbf{Proof of (III).}
+The transition kernel of the T-HMM (\Cref{def:thmm}) under policy $\pi$
+is (cf.~\eqref{eq:kernel}):
+\[
+  \kappa_\pi\!\bigl((\bm{h}_t, x_t),\, B \times \{v\}\bigr)
+  = \pi(v \mid \bm{h}_t) \cdot \ind\!\bigl[F_\theta(\bm{h}_t, v) \in B\bigr].
+\]
+For $v \neq \langle\mathrm{eos}\rangle$, the state transition $F_\theta$ is
+deterministic given $(\bm{h}_t, v)$, and the Radon-Nikod\'ym derivative
+reduces to the emission ratio:
+\[
+  \frac{d\kappa^*}{d\kappa_{\mathrm{ref}}}
+  \bigg|_{(\bm{h}_t, x_t),\, v}
+  = \frac{\pi^*(v \mid \bm{h}_t)}{\pi_{\mathrm{ref}}(v \mid \bm{h}_t)}
+  = \Gamma(\bm{h}_t, v).
+\]
+For $v = \langle\mathrm{eos}\rangle$, the transition leads to an
+\emph{absorbing state} $\bm{h}_\dagger$. The Radon-Nikod\'ym derivative of
+the absorption probability is
+\[
+  \frac{\pi^*(\langle\mathrm{eos}\rangle \mid \bm{h}_t)}%
+       {\pi_{\mathrm{ref}}(\langle\mathrm{eos}\rangle \mid \bm{h}_t)}
+  = \Gamma(\bm{h}_t, \langle\mathrm{eos}\rangle).
+\]
+The optimal HMM is obtained from the reference HMM by tilting
+\emph{both} the continuation emissions and the absorption probability
+by $\Gamma$. \qed
+
+\medskip
+\noindent\textbf{Mutual consistency.}
+The three characterisations are three readings of the single identity,
+valid for all $v \in \vocab$ including $\langle\mathrm{eos}\rangle$:
+\begin{equation}\label{eq:master}
+  \boxed{%
+    \underbrace{\exp\!\bigl(\beta^{-1} A^*(\bm{h}_t, v)\bigr)}_{\text{(I) advantage / stopping value}}
+    \;=\;
+    \underbrace{\frac{\pi^*(v|\bm{h}_t)}{\pi_{\mathrm{ref}}(v|\bm{h}_t)}}_{\text{(II) likelihood ratio / SPRT}}
+    \;=\;
+    \underbrace{\frac{d\kappa^*}{d\kappa_{\mathrm{ref}}}
+    \bigg|_{(\bm{h}_t, x_t),\, v}}_{\text{(III) kernel tilt / absorption}}
+    \;=\;
+    \Gamma(\bm{h}_t, v).
+  }
+\end{equation}
+All three are \emph{defined} as the same ratio from~\eqref{eq:Z_ratio}
+and therefore agree identically, not approximately. When $v =
+\langle\mathrm{eos}\rangle$, the identity connects the optimal stopping
+decision across all three frameworks: the exercise boundary (control),
+the commitment threshold (Bayesian), and the absorption rate (HMM) are
+the same surface in hidden-state space. \qed
+\end{proof}
+
+\subsection{The Necessity of Value Encoding}
+
+\begin{theorem}[Structural necessity of Bellman decomposition]\label{thm:necessity}
+Let $\pi_\theta$ be any autoregressive policy that approximates the optimal
+RLHF policy $\pi^*$ in the sense that
+$\KL(\pi^* \| \pi_\theta) \leq \varepsilon$.
+Then there exists a function $\hat{V}: \R^d \to \R$ such that:
+\begin{enumerate}[label=(\roman*)]
+  \item $\hat{V}$ is computable from the hidden state: $\hat{V}(\bm{h}_t) =
+        \psi(\bm{h}_t)$ for some function $\psi$ extractable from the model's
+        parameters.
+  \item $\hat{V}$ satisfies the soft Bellman equation to within
+        $O(\sqrt{\varepsilon})$:
+        \[
+          \left|\hat{V}(\bm{h}_t) - \beta \log
+          \E_{v \sim \pi_{\mathrm{ref}}}\!\left[
+            \exp\!\bigl(\beta^{-1} \hat{V}(F_\theta(\bm{h}_t, v))\bigr)
+          \right]\right|
+          \leq O(\sqrt{\varepsilon}).
+        \]
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Define $\hat{V}(\bm{h}_t) = \beta \log \sum_{v \in \vocab}
+\pi_\theta(v|\bm{h}_t) / \pi_{\mathrm{ref}}(v|\bm{h}_t) \cdot
+\pi_{\mathrm{ref}}(v|\bm{h}_t) \cdot
+\exp(\beta^{-1} \hat{V}(F_\theta(\bm{h}_t, v)))$---i.e., the soft value
+function \emph{induced by} $\pi_\theta$ as if it were optimal. Since
+$\pi_\theta \approx \pi^*$ (in KL), we have
+$\pi_\theta(v|\bm{h}_t)/\pi_{\mathrm{ref}}(v|\bm{h}_t) \approx
+\Gamma(\bm{h}_t, v)$ pointwise in a total-variation sense (by Pinsker's
+inequality, $\|\pi_\theta(\cdot|\bm{h}_t) - \pi^*(\cdot|\bm{h}_t)\|_{\TV}
+\leq \sqrt{\varepsilon/2}$). Substituting into the soft Bellman equation
+and bounding the residual via the Lipschitz continuity of $\log$ on $[p_{\min}, 1]$
+yields the $O(\sqrt{\varepsilon})$ bound. \qed
+\end{proof}
+
+\begin{remark}[Interpretation]
+\Cref{thm:necessity} says: you cannot be a good RLHF policy without
+approximately solving the Bellman equation. The Bellman structure is not
+an optional interpretation---it is a \emph{necessary consequence} of
+optimising a trajectory-level reward through sequential token emission.
+The model has no choice but to encode an approximate value function.
+\end{remark}
+
+\subsection{Decomposition of the Global Bayes Factor}
+
+\begin{corollary}[Telescoping identity with endogenous stopping]\label{cor:telescope}
+The trajectory-level Bayes factor (posterior-to-prior ratio) decomposes as a
+telescoping product of per-step $\Gamma$-ratios, including the stopping
+decision:
+\begin{equation}\label{eq:telescope}
+  \frac{\pi^*(\bm{x}_{1:\tau})}{\pi_{\mathrm{ref}}(\bm{x}_{1:\tau})}
+  = \frac{\exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau}))}{Z_0}
+  = \prod_{t=1}^{\tau} \Gamma(\bm{h}_{t-1}, x_t)
+  = \exp\!\left(\beta^{-1} \sum_{t=1}^{\tau} A^*(\bm{h}_{t-1}, x_t)\right),
+\end{equation}
+where $x_\tau = \langle\mathrm{eos}\rangle$ and the final factor
+$\Gamma(\bm{h}_{\tau-1}, \langle\mathrm{eos}\rangle)$ encodes the
+stopping decision.
+This identity says three things simultaneously:
+\begin{enumerate}[label=(\alph*),nosep]
+  \item \textbf{Control:} The trajectory reward decomposes into a sum of
+        per-step advantages \emph{including the stopping advantage}---this
+        is the reward decomposition lemma of the free-boundary Bellman
+        framework. The number of terms is itself optimised.
+  \item \textbf{Bayesian:} The full Bayes factor decomposes into a product of
+        per-step likelihood ratios, with the final factor being the
+        \emph{commitment decision}---the chain rule of Bayesian
+        updating with an endogenous sample size (SPRT).
+  \item \textbf{HMM:} The Radon-Nikod\'ym derivative of the trajectory
+        measure decomposes into per-step kernel ratios terminating at
+        absorption---the Girsanov-type change of measure for Markov
+        chains with killing.
+\end{enumerate}
+These three decompositions are the same identity read in three languages.
+The endogenous stopping time $\tau$ is the same in all three: the
+exercise boundary, the commitment threshold, and the absorption time
+are one object.
+\end{corollary}
+
+\begin{proof}
+For the telescoping product, noting that for
+$t < \tau$, $x_t \neq \langle\mathrm{eos}\rangle$ so
+$\Gamma(\bm{h}_{t-1}, x_t) = Z(\bm{h}_t)/Z(\bm{h}_{t-1})$, and for
+$t = \tau$, $x_\tau = \langle\mathrm{eos}\rangle$ so
+$\Gamma(\bm{h}_{\tau-1}, \langle\mathrm{eos}\rangle)
+= \exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau-1}))/Z(\bm{h}_{\tau-1})$:
+\begin{align}
+  \prod_{t=1}^{\tau} \Gamma(\bm{h}_{t-1}, x_t)
+  &= \left(\prod_{t=1}^{\tau-1} \frac{Z(\bm{h}_t)}{Z(\bm{h}_{t-1})}\right)
+     \cdot \frac{\exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau-1}))}{Z(\bm{h}_{\tau-1})} \notag \\
+  &= \frac{Z(\bm{h}_{\tau-1})}{Z(\bm{h}_0)}
+     \cdot \frac{\exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau-1}))}{Z(\bm{h}_{\tau-1})}
+  = \frac{\exp(\beta^{-1} R_\phi(\bm{x}_{1:\tau}))}{Z_0}.
+\end{align}
+The telescoping cancellation is exact, and the stopping factor merges
+seamlessly. \qed
+\end{proof}
+
+\subsection{Summary: Why the Trinity Holds}
+
+The Trinity is not a coincidence, a metaphor, or an approximation. It holds
+because:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Sequential emission + trajectory reward + endogenous stopping
+        $\Rightarrow$ free-boundary Bellman.}
+        Any agent that must act step-by-step, is evaluated on the
+        cumulative outcome, and decides when to stop is solving a
+        free-boundary dynamic programming problem. The soft Bellman
+        equation with stopping (\Cref{thm:soft_bellman}) is the
+        \emph{unique} decomposition of the trajectory-level RLHF objective
+        into per-step decisions plus a stopping rule.
+
+  \item \textbf{Gibbs form + chain rule + endogenous sample size
+        $\Rightarrow$ sequential testing.}
+        The optimal RLHF policy has the Gibbs form
+        (\Cref{thm:rlhf_optimal}), which IS Bayes' rule. Its autoregressive
+        factorisation IS sequential Bayesian updating. The endogenous
+        stopping time makes this a sequential probability ratio test:
+        the model continues until the evidence is sufficient.
+        The partition function $Z(\bm{h}_t)$ IS the marginal likelihood.
+
+  \item \textbf{Markov state + deterministic transitions + absorbing state
+        $\Rightarrow$ killed HMM.}
+        The hidden state is Markov by construction (\Cref{prop:markov}).
+        The EOS token induces an absorbing state, creating a Markov chain
+        with killing. The change from reference to optimal policy is a
+        Radon-Nikod\'ym tilt of both the emission kernel and the
+        absorption rate.
+
+  \item \textbf{All three meet at $\Gamma$, including at the boundary.}
+        The ratio $\Gamma$ is the unique object that simultaneously
+        encodes the per-step advantage, the per-step likelihood ratio,
+        and the per-step kernel derivative. For $v \neq
+        \langle\mathrm{eos}\rangle$, it governs continuation. For
+        $v = \langle\mathrm{eos}\rangle$, it governs stopping. The
+        optimal stopping region---the exercise boundary, the commitment
+        threshold, the absorption surface---is the same set $\cS^*$ in
+        all three frameworks.
+\end{enumerate}
+
+\subsection{Convergence of the Three Decay Mechanisms}
+
+A further consistency check: all three frameworks predict the same memory
+decay, governed by the same spectral parameter.
+
+\begin{proposition}[Unified decay]\label{prop:unified_decay}
+Under the contraction condition of \Cref{thm:decay}:
+\begin{enumerate}[label=(\alph*),nosep]
+  \item \textbf{HMM}: Influence of token $x_s$ on prediction at $t$ decays as
+        $O(\lambda^{2(t-s)})$ (forward mixing).
+  \item \textbf{Control}: The advantage $A^*(\bm{h}_t, v)$'s sensitivity to a
+        perturbation at step $s$ decays as $O(\lambda^{t-s})$, since
+        $A^*$ depends on $V^*(\bm{h}_t)$ which inherits the contraction of
+        $\bm{h}_t$ (cf.~\eqref{eq:adjoint}).
+  \item \textbf{Bayesian}: The per-step likelihood ratio $\Gamma(\bm{h}_t, v)$'s
+        sensitivity to evidence at step $s$ decays as $O(\lambda^{2(t-s)})$
+        (posterior decorrelation).
+\end{enumerate}
+All three rates are governed by the same quantity $\lambda$: the contraction
+rate of the hidden-state dynamics $F_\theta$.
+\end{proposition}
+
+
+%=============================================================================
+\section{Implications and Interpretive Consequences}\label{sec:implications}
+%=============================================================================
+
+\subsection{Coherence Degradation in Long Generations}
+
+\begin{proposition}[Ergodic drift]
+For generation lengths $T \gg \tau_{\mathrm{mix}}$, the autoregressive process
+converges toward the stationary distribution of the Markov chain, losing
+coherence with the initial prompt. This is the long-run memorylessness described
+in \Cref{cor:memoryless}: the ``plot'' set up in the opening tokens is
+gradually forgotten as the process mixes.
+\end{proposition}
+
+This explains the empirical observation that very long model generations tend to
+become generic, repetitive, or drift from the original topic---even when the
+context window has not been exhausted.
+
+\subsection{Chain-of-Thought as Control Horizon Extension}
+
+In the control framework, CoT prompting expands the effective planning horizon.
+
+\begin{proposition}
+Let $T_0$ be the base horizon and $T_{\mathrm{CoT}} = T_0 + K$ the
+horizon with $K$ additional reasoning tokens. The value achievable satisfies
+\[
+  V^*_{T_{\mathrm{CoT}}}(\bm{h}_0) \geq V^*_{T_0}(\bm{h}_0)
+\]
+with strict inequality whenever the optimal trajectory under $T_0$ is
+suboptimal---i.e., whenever intermediate reasoning steps allow the controller
+to reach higher-value terminal states.
+\end{proposition}
+
+\subsection{Few-Shot Learning as Strong Likelihood}
+
+In the Bayesian framework, few-shot examples act as concentrated evidence.
+
+\begin{proposition}
+Let $\bm{c}_k$ be a prompt containing $k$ input-output demonstrations. The
+posterior entropy satisfies
+\[
+  \cH_\theta(\bm{c}_k) \leq \cH_\theta(\bm{c}_{k-1}) \leq \cdots \leq
+  \cH_\theta(\bm{c}_0),
+\]
+with equality iff the additional examples are redundant given the
+existing context. Each example narrows the posterior, concentrating the
+model's predictive distribution on the task-relevant region of sequence space.
+\end{proposition}
+
+\subsection{Temperature as Posterior Sharpening}
+
+\begin{proposition}
+Sampling with temperature $\tau > 0$ modifies the emission distribution to
+\[
+  p_\tau(v \mid \bm{h}_t)
+  = \frac{p_\theta(v \mid \bm{h}_t)^{1/\tau}}%
+         {\sum_{w} p_\theta(w \mid \bm{h}_t)^{1/\tau}}.
+\]
+In the Bayesian framework, $\tau < 1$ corresponds to \emph{tempering} the
+posterior (increasing confidence beyond what the evidence warrants), while
+$\tau > 1$ corresponds to \emph{flattening} (increased epistemic humility).
+In the control framework, $\tau$ modulates the \emph{exploration-exploitation
+trade-off} of the stochastic policy.
+\end{proposition}
+
+
+%=============================================================================
+\section{Formal Connections to Classical Theory}\label{sec:connections}
+%=============================================================================
+
+\subsection{Relationship to Predictive State Representations}
+
+The T-HMM of \Cref{def:thmm} is closely related to Predictive State
+Representations (PSRs). In a PSR, the state is defined as a vector of
+predictions about future observables, and the system is ``observable'' in the
+sense that the state can be maintained from observations alone.
+
+\begin{proposition}
+The transformer hidden state $\bm{h}_t$ constitutes an \emph{approximate}
+predictive state: it encodes (approximately) all information about the
+future predictive distribution that is extractable from the past observations
+$\bm{x}_{1:t}$. It differs from a classical PSR in that:
+\begin{enumerate}[label=(\alph*),nosep]
+  \item The state is computed by a learned, parametric function
+        $\Phi_\theta$ rather than maintained via an update rule derived
+        from the system's dynamics.
+  \item The approximation quality depends on model capacity and training
+        adequacy.
+\end{enumerate}
+\end{proposition}
+
+\subsection{Relationship to Information Bottleneck}
+
+\begin{proposition}
+The hidden state $\bm{h}_t$ solves an approximate \emph{information bottleneck}
+problem:
+\[
+  \min_{\bm{h}_t}\; I(\bm{x}_{1:t};\, \bm{h}_t) - \beta_{\mathrm{IB}}\, I(\bm{h}_t;\, x_{t+1}),
+\]
+where $I(\cdot;\cdot)$ denotes mutual information. The state compresses the
+past ($\bm{x}_{1:t}$) while retaining information predictive of the future
+($x_{t+1}$). The contraction rate $\lambda$ controls how aggressively the
+bottleneck compresses distant information.
+\end{proposition}
+
+\subsection{Relationship to Free Energy Principle}
+
+The RLHF objective~\eqref{eq:rlhf_obj} has a direct connection to variational
+free energy minimisation:
+\begin{align}
+  -J_{\mathrm{RLHF}}(\theta)
+  &= -\E_{\pi_\theta}[R_\phi] + \beta\, \KL(\pi_\theta \| \pi_{\mathrm{ref}}) \\
+  &= \beta\!\left(
+       -\beta^{-1}\E_{\pi_\theta}[R_\phi]
+       + \KL(\pi_\theta \| \pi_{\mathrm{ref}})
+     \right) \\
+  &= \beta\, \underbrace{\bigl(
+       \E_{\pi_\theta}[-\log \tilde{p}(\bm{x})]
+       + \KL(\pi_\theta \| \pi_{\mathrm{ref}})
+     \bigr)}_{\text{variational free energy}},
+\end{align}
+where $\tilde{p}(\bm{x}) \propto \exp(\beta^{-1} R_\phi(\bm{x}))$. Minimising
+$-J_{\mathrm{RLHF}}$ is thus equivalent to minimising the variational free
+energy, connecting transformer training to the free energy principle from
+theoretical neuroscience.
+
+
+%=============================================================================
+\section{The Spectral Structure of Memory}\label{sec:spectral}
+%=============================================================================
+
+To make the decay analysis of \Cref{sec:decay} more precise, we study the
+spectral properties of the linearised hidden-state dynamics.
+
+\subsection{Transfer Operator}
+
+\begin{definition}[Linearised transfer operator]
+At a reference trajectory $\bar{\bm{h}}_{1:T}$, define the \emph{transfer
+operator} at step $t$ as
+\[
+  \cT_t = \frac{\partial F_\theta(\bar{\bm{h}}_t, \bar{x}_{t+1})}%
+               {\partial \bm{h}_t}
+  \in \R^{d \times d}.
+\]
+The cumulative transfer from step $s$ to step $t$ is
+\[
+  \cT_{s:t} = \prod_{\tau=s}^{t-1} \cT_\tau.
+\]
+\end{definition}
+
+\begin{theorem}[Spectral characterisation of memory]\label{thm:spectral}
+Let $\sigma_1(\cT_{s:t}) \geq \cdots \geq \sigma_d(\cT_{s:t})$ be the singular
+values of $\cT_{s:t}$. Then:
+\begin{enumerate}[label=(\roman*)]
+  \item The \emph{effective rank} of the influence propagation from $s$ to $t$ is
+  \[
+    r_{\mathrm{eff}}(s,t)
+    = \frac{\bigl(\sum_i \sigma_i\bigr)^2}{\sum_i \sigma_i^2}
+    \leq d,
+  \]
+  and this decreases with $|t-s|$ as modes decay at different rates.
+
+  \item The \emph{memory spectrum} $\{\lambda_k\}_{k=1}^d$, defined as the
+  geometric means $\lambda_k = (\prod_\tau \sigma_k(\cT_\tau))^{1/(t-s)}$,
+  determines which directions in hidden space carry long-range information.
+
+  \item Directions with $\lambda_k \approx 1$ correspond to
+  \emph{persistent memory modes} (e.g., topic, style, factual anchors),
+  while directions with $\lambda_k \ll 1$ carry only local information
+  (e.g., recent syntactic context).
+\end{enumerate}
+\end{theorem}
+
+This provides a mechanistic explanation for why transformers can simultaneously
+exhibit short-range syntactic sensitivity and long-range semantic coherence: the
+memory is \emph{spectrally structured}, with different components decaying at
+different rates.
+
+
+%=============================================================================
+\section{Discussion and Open Questions}\label{sec:discussion}
+%=============================================================================
+
+\subsection{Time Inhomogeneity}
+
+The T-HMM is fundamentally \emph{time-inhomogeneous}: the effective transition
+kernel $\kappa_\theta$ varies with position (due to positional encodings) and
+with context (due to attention). Classical ergodic theory for time-homogeneous
+chains must be extended to handle this case. The relevant framework is that of
+\emph{non-stationary Markov chains} with \emph{uniform ergodicity} conditions.
+
+\subsection{Non-Monotonic Attention}
+
+The contraction assumption in \Cref{thm:decay} is violated when attention heads
+``reach back'' to specific positions with high weight. This creates
+\emph{punctuated memory}: the influence function $I(s,t)$ is not monotonically
+decreasing but exhibits spikes at positions of high attention. A more refined
+model would replace the uniform contraction with a \emph{random} contraction
+rate, leading to a multiplicative random walk analysis.
+
+\subsection{Scaling Laws and the Prior}
+
+As model scale increases, the pretrained prior $\mu_\theta$ becomes a
+better approximation to the ``true'' distribution over natural language.
+In the Bayesian framework, this means that larger models require \emph{less}
+evidence (shorter prompts) to concentrate on the correct posterior---which
+is consistent with the empirical finding that larger models exhibit stronger
+few-shot learning.
+
+\subsection{Open Problems}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Exact characterisation of the spectral gap.} Can the mixing
+        time of the T-HMM be bounded in terms of architectural parameters
+        (depth, width, number of heads)?
+
+  \item \textbf{Finite-sample Bayesian consistency.} Under what conditions does
+        the in-context posterior converge to the true task posterior as the number
+        of in-context examples grows?
+
+  \item \textbf{Control complexity.} What is the computational complexity of the
+        optimal control problem solved (approximately) by the transformer, and
+        how does it relate to the model's inference cost?
+
+  \item \textbf{Value function geometry.} Can the implicit value function
+        $V_\theta(\bm{h}_t)$ be extracted and analysed? Does it exhibit the
+        smoothness properties assumed in approximate dynamic programming?
+
+  \item \textbf{Multi-agent control.} In conversational settings, the user and
+        the model are both acting as controllers with coupled dynamics. The
+        appropriate framework may be \emph{Stackelberg games} or
+        \emph{cooperative control} rather than single-agent optimisation.
+\end{enumerate}
+
+%=============================================================================
+\section{Conclusion}\label{sec:conclusion}
+%=============================================================================
+
+We have developed a unified theoretical framework that characterises
+autoregressive transformer language models through three equivalent lenses:
+
+\begin{enumerate}[nosep]
+  \item As \textbf{hidden Markov processes} with continuous-state dynamics and
+        exponentially decaying memory, formalising the notion that these models
+        are ``memoryless in the long run'' while retaining local, vanishingly
+        influential memory at each step.
+
+  \item As \textbf{stochastic optimal controllers} that solve a Bellman equation
+        over the hidden-state manifold, selecting tokens as control actions that
+        steer the sequence toward high-value terminal states.
+
+  \item As \textbf{Bayesian inference engines} whose pretrained weights define a
+        prior over language, RLHF reshapes this prior with a value-based
+        likelihood, and in-context conditioning performs amortised posterior
+        updating.
+\end{enumerate}
+
+The three frameworks are not merely analogies but are provably equivalent
+formalisations, with the hidden state $\bm{h}_t$ playing the unifying role
+of Markov state, control state, and sufficient statistic simultaneously.
+The spectral structure of the hidden-state dynamics governs the decay of
+influence in all three frameworks, providing a single quantitative
+characterisation of the model's effective memory.
+
+This unified perspective yields interpretive power: chain-of-thought prompting
+is control horizon extension; prompt engineering is likelihood design; RLHF is
+prior reweighting; temperature is posterior tempering; coherence degradation in
+long generations is ergodic mixing. These are not metaphors---they are
+mathematical consequences of the framework.
+
+\bigskip
+
+\appendix
+
+%=============================================================================
+\section{Detailed Proof of \Cref{thm:decay}}\label{app:decay_proof}
+%=============================================================================
+
+\begin{proof}
+Let $\bm{x}_{1:t}$ be a token sequence and let $\bm{x}_{1:t}^{\setminus s}$
+denote the sequence with $x_s$ replaced by an independent draw $\tilde{x}_s
+\sim p_\theta(x_s)$. Define
+\[
+  \bm{h}_\tau = \Phi_\theta(\bm{x}_{1:\tau}), \qquad
+  \tilde{\bm{h}}_\tau = \Phi_\theta(\bm{x}_{1:\tau}^{\setminus s}).
+\]
+For $\tau < s$, $\bm{h}_\tau = \tilde{\bm{h}}_\tau$. At $\tau = s$, the
+perturbation introduces a discrepancy
+$\|\bm{h}_s - \tilde{\bm{h}}_s\| \leq D$
+where $D$ is the diameter of the embedding space.
+
+For $\tau > s$, since $\bm{h}_{\tau+1} = F_\theta(\bm{h}_\tau, x_{\tau+1})$
+and $F_\theta$ is $\lambda$-Lipschitz in its first argument:
+\[
+  \|\bm{h}_\tau - \tilde{\bm{h}}_\tau\| \leq \lambda^{\tau - s}\, D.
+\]
+
+The emission distributions at step $t$ are
+\[
+  p_\theta(\cdot \mid \bm{h}_t), \qquad
+  p_\theta(\cdot \mid \tilde{\bm{h}}_t).
+\]
+Since $g_\theta = \softmax \circ (W_{\mathrm{out}} \cdot)$ is Lipschitz with
+constant $L_g$ (the softmax Jacobian is bounded by $\nicefrac{1}{4}$ per
+coordinate, and $W_{\mathrm{out}}$ has bounded operator norm),
+\[
+  \|g_\theta(\bm{h}_t) - g_\theta(\tilde{\bm{h}}_t)\|_1
+  \leq L_g\, \|\bm{h}_t - \tilde{\bm{h}}_t\|
+  \leq L_g\, D\, \lambda^{t-s}.
+\]
+
+By Pinsker's inequality and the local quadratic bound on KL divergence:
+\[
+  \KL\!\bigl(g_\theta(\bm{h}_t) \| g_\theta(\tilde{\bm{h}}_t)\bigr)
+  \leq \frac{\|g_\theta(\bm{h}_t) - g_\theta(\tilde{\bm{h}}_t)\|_1^2}%
+            {2\, \min_v p_\theta(v|\tilde{\bm{h}}_t)}
+  \leq C'\, \lambda^{2(t-s)},
+\]
+where $C' = L_g^2 D^2 / (2 p_{\min})$ and $p_{\min}$ is a lower bound on
+the emission probabilities (which exists for softmax with bounded logits).
+
+Taking expectations over the randomness of $\tilde{x}_s$:
+\[
+  I(s,t) = \E\!\left[\KL\!\bigl(g_\theta(\bm{h}_t) \| g_\theta(\tilde{\bm{h}}_t)\bigr)\right]
+  \leq C'\, \lambda^{2(t-s)} \eqqcolon C\, \lambda^{2(t-s)}.
+  \qedhere
+\]
+\end{proof}
+
+
+%=============================================================================
+\section{Proof of \Cref{thm:rlhf_optimal}}\label{app:rlhf_proof}
+%=============================================================================
+
+\begin{proof}
+The RLHF objective is
+\[
+  J(\pi) = \E_\pi[R_\phi(\bm{x})] - \beta\, \KL(\pi \| \pi_{\mathrm{ref}})
+  = \sum_{\bm{x}} \pi(\bm{x})\!\left[
+    R_\phi(\bm{x}) - \beta \log \frac{\pi(\bm{x})}{\pi_{\mathrm{ref}}(\bm{x})}
+  \right].
+\]
+Setting the functional derivative to zero:
+\[
+  \frac{\delta J}{\delta \pi(\bm{x})}
+  = R_\phi(\bm{x}) - \beta \log \frac{\pi(\bm{x})}{\pi_{\mathrm{ref}}(\bm{x})} - \beta
+  = 0.
+\]
+Solving:
+\[
+  \log \pi^*(\bm{x})
+  = \log \pi_{\mathrm{ref}}(\bm{x}) + \beta^{-1} R_\phi(\bm{x}) - 1.
+\]
+Exponentiating:
+\[
+  \pi^*(\bm{x}) \propto \pi_{\mathrm{ref}}(\bm{x})\, \exp\!\bigl(\beta^{-1} R_\phi(\bm{x})\bigr).
+\]
+The proportionality constant is the normalising partition function
+$Z = \sum_{\bm{x}} \pi_{\mathrm{ref}}(\bm{x})\, \exp(\beta^{-1} R_\phi(\bm{x}))$.
+Strict concavity of $J$ in $\pi$ (since $-\KL$ is strictly concave)
+guarantees uniqueness. \qed
+\end{proof}
+
+
+%=============================================================================
+\section{Notation Reference}\label{app:notation}
+%=============================================================================
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}lp{10cm}@{}}
+  \toprule
+  \textbf{Symbol} & \textbf{Meaning} \\
+  \midrule
+  $\vocab$ & Token vocabulary, $|\vocab| = V$ \\
+  $d$ & Hidden state dimension \\
+  $T$ & Sequence length / control horizon \\
+  $\bm{x}_{1:t}$ & Token sequence $(x_1, \ldots, x_t)$ \\
+  $\bm{h}_t$ & Hidden state at step $t$, $\bm{h}_t \in \R^d$ \\
+  $\Phi_\theta$ & Transformer encoding map \\
+  $F_\theta$ & Incremental hidden-state update \\
+  $g_\theta$ & Emission distribution (softmax output) \\
+  $\kappa_\theta$ & Markov transition kernel \\
+  $\mu_\theta$ & Pretrained prior over sequences \\
+  $\pi_\theta$ & Policy (conditional token distribution) \\
+  $R_\phi$ & Learned reward model \\
+  $V_\theta$ & Value function (value-to-go) \\
+  $\lambda$ & Contraction rate of hidden dynamics \\
+  $\beta$ & KL penalty / inverse temperature \\
+  $\tau$ & Sampling temperature \\
+  $\tau_{\mathrm{mix}}$ & Mixing time of the hidden Markov process \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
