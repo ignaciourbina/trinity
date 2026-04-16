@@ -16,6 +16,8 @@ Works on CPU too, just slower (~10 min).
 import torch
 import torch.nn.functional as F
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
@@ -56,7 +58,7 @@ PROMPTS = [
 
 # DP parameters
 TOP_K = 12          # top-K tokens to consider at each step
-DEPTH = 3           # lookahead depth for backward DP
+DEPTH = 2           # CPU-friendly default (Colab/GPU original: DEPTH = 3)
 BETA = 1.0          # KL penalty / inverse temperature
 
 # Reward function: we use a simple but nontrivial reward
@@ -510,7 +512,8 @@ for prompt in PROMPTS:
 
 # --- Test B: Telescoping ---
 telescope_errors = verify_telescoping(
-    PROMPTS[0], n_trajectories=15, max_steps=4, depth=2
+    # CPU-friendly defaults (Colab/GPU original: n_trajectories=15)
+    PROMPTS[0], n_trajectories=8, max_steps=4, depth=2
 )
 
 # --- Test C: Influence decay ---
@@ -518,7 +521,8 @@ telescope_errors = verify_telescoping(
 long_prompt = ("In the beginning there was nothing but darkness and silence "
                "and the vast empty void stretched endlessly in every direction "
                "until one day a small spark appeared")
-influence = measure_influence_decay(long_prompt, n_perturbations=40)
+# CPU-friendly defaults (Colab/GPU original: n_perturbations=40)
+influence = measure_influence_decay(long_prompt, n_perturbations=20)
 
 
 # ============================================================================
