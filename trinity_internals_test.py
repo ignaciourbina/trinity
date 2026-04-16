@@ -249,7 +249,10 @@ def run_linear_probes(X_by_layer, y, alpha=RIDGE_ALPHA):
     best_scatter = (np.array([]), np.array([]))
 
     if len(y) < 8:
-        raise RuntimeError("Not enough samples for train/test split in probe experiment.")
+        raise RuntimeError(
+            f"Not enough samples for train/test split in probe experiment. "
+            f"Minimum 8 samples required, got {len(y)}."
+        )
 
     indices = np.arange(len(y))
     train_idx, test_idx = train_test_split(indices, test_size=0.25, random_state=RNG_SEED)
@@ -264,7 +267,7 @@ def run_linear_probes(X_by_layer, y, alpha=RIDGE_ALPHA):
         r2 = r2_score(y_test, y_pred)
         r2_by_layer.append(float(r2))
 
-        y_train_perm = np.random.permutation(y_train)
+        y_train_perm = np.random.RandomState(RNG_SEED).permutation(y_train)
         probe_perm = Ridge(alpha=alpha)
         probe_perm.fit(X_train, y_train_perm)
         y_pred_perm = probe_perm.predict(X_test)
@@ -357,6 +360,7 @@ def collect_advantage_pairs(prompts, beta=BETA, top_k=TOP_K, depth=DEPTH):
 
 def fit_advantage_direction(X, y, per_prompt_data, alpha=RIDGE_ALPHA):
     """Fit global direction u and compute prompt-wise consistency metrics."""
+    # We fit pure direction vectors in delta space, so we disable intercept.
     reg = Ridge(alpha=alpha, fit_intercept=False)
     reg.fit(X, y)
     y_pred = reg.predict(X)
@@ -471,7 +475,7 @@ def make_figure(probe_res, adv_res, output_path='trinity_internals_results.png')
 
     if cos_matrix.size > 0:
         iu = np.triu_indices_from(cos_matrix, k=1)
-        mean_cos = float(np.mean(cos_matrix[iu])) if len(iu[0]) else 1.0
+        mean_cos = float(np.mean(cos_matrix[iu])) if len(iu[0]) else float('nan')
     else:
         mean_cos = float('nan')
 
