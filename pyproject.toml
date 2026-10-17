@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trinity"
+version = "0.2.0"
+description = "Optimal control, Bayesian inference and HMMs: verifying the Trinity on language models"
+readme = "README.md"
+requires-python = ">=3.9"
+# The core (toy model, tree DP, remote client) needs only numpy; running a model locally needs [hf].
+dependencies = [
+    "numpy>=1.22",
+    "matplotlib>=3.5",
+]
+
+[project.optional-dependencies]
+hf = ["torch>=2.0", "transformers>=4.36"]
+ngrok = ["pyngrok>=7"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+trinity = "trinity.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["trinity*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
