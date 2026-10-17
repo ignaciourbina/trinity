@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 hf = ["torch>=2.0", "transformers>=4.36"]
 ngrok = ["pyngrok>=7"]
+internals = ["torch>=2.0", "transformers>=4.36", "scikit-learn>=1.0"]
 dev = ["pytest>=7"]
 
 [project.scripts]
